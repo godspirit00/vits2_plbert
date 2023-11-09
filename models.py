@@ -29,20 +29,6 @@ AVAILABLE_DURATION_DISCRIMINATOR_TYPES = [
 from transformers import AlbertConfig, AlbertModel
 import yaml
 
-plbert_config = yaml.safe_load(open("./bert/config.yml"))
-albert_base_configuration = AlbertConfig(**plbert_config['model_params'])
-bert = AlbertModel(albert_base_configuration)
-checkpoint = torch.load("./bert/step_1000000.t7", map_location='cpu')
-state_dict = checkpoint['net']
-from collections import OrderedDict
-new_state_dict = OrderedDict()
-for k, v in state_dict.items():
-    name = k[7:] # remove `module.`
-    if name.startswith('encoder.'):
-        name = name[8:] # remove `encoder.`
-        new_state_dict[name] = v
-bert.load_state_dict(new_state_dict,strict=False)
-
 
 class StochasticDurationPredictor(nn.Module):
     def __init__(
@@ -370,9 +356,25 @@ class TextEncoder(nn.Module):
         self.kernel_size = kernel_size
         self.p_dropout = p_dropout
         self.gin_channels = gin_channels
+
+        plbert_config = yaml.safe_load(open("./bert/config.yml"))
+        albert_base_configuration = AlbertConfig(**plbert_config['model_params'])
+        bert = AlbertModel(albert_base_configuration)
+        checkpoint = torch.load("./bert/step_1000000.t7", map_location='cpu')
+        state_dict = checkpoint['net']
+        from collections import OrderedDict
+        new_state_dict = OrderedDict()
+        for k, v in state_dict.items():
+            name = k[7:] # remove `module.`
+            if name.startswith('encoder.'):
+                name = name[8:] # remove `encoder.`
+                new_state_dict[name] = v
+        bert.load_state_dict(new_state_dict,strict=False)
         
+        # self.emb = nn.Embedding(n_vocab, hidden_channels)
         self.emb=bert
         self.bert_encoder=nn.Linear(plbert_config['model_params']['hidden_size'], hidden_channels,False)
+        # nn.init.normal_(self.emb.weight, 0.0, hidden_channels**-0.5)
 
         self.encoder = attentions.Encoder(
             hidden_channels,
