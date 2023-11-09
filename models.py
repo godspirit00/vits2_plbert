@@ -26,6 +26,23 @@ AVAILABLE_DURATION_DISCRIMINATOR_TYPES = [
     "dur_disc_2",
 ]
 
+from transformers import AlbertConfig, AlbertModel
+import yaml
+
+plbert_config = yaml.safe_load(open("./bert/config.yml"))
+albert_base_configuration = AlbertConfig(**plbert_config['model_params'])
+bert = AlbertModel(albert_base_configuration)
+checkpoint = torch.load("./bert/step_1000000.t7", map_location='cpu')
+state_dict = checkpoint['net']
+from collections import OrderedDict
+new_state_dict = OrderedDict()
+for k, v in state_dict.items():
+    name = k[7:] # remove `module.`
+    if name.startswith('encoder.'):
+        name = name[8:] # remove `encoder.`
+        new_state_dict[name] = v
+bert.load_state_dict(new_state_dict,strict=False)
+
 
 class StochasticDurationPredictor(nn.Module):
     def __init__(
@@ -353,8 +370,9 @@ class TextEncoder(nn.Module):
         self.kernel_size = kernel_size
         self.p_dropout = p_dropout
         self.gin_channels = gin_channels
-        self.emb = nn.Embedding(n_vocab, hidden_channels)
-        nn.init.normal_(self.emb.weight, 0.0, hidden_channels**-0.5)
+        
+        self.emb=bert
+        self.bert_encoder=nn.Linear(plbert_config['model_params']['hidden_size'], hidden_channels,False)
 
         self.encoder = attentions.Encoder(
             hidden_channels,
@@ -368,12 +386,13 @@ class TextEncoder(nn.Module):
         self.proj = nn.Conv1d(hidden_channels, out_channels * 2, 1)
 
     def forward(self, x, x_lengths, g=None):
-        x = self.emb(x) * math.sqrt(self.hidden_channels)  # [b, t, h]
+        x_mask = commons.sequence_mask(x_lengths, x.size(1))
+        x_bert=self.emb(x,attention_mask=~x_mask).last_hidden_state
+        x_bert=self.bert_encoder(x_bert)
+        x = x_bert * math.sqrt(self.hidden_channels)  # [b, t, h]
         x = torch.transpose(x, 1, -1)  # [b, h, t]
-        x_mask = torch.unsqueeze(commons.sequence_mask(x_lengths, x.size(2)), 1).to(
-            x.dtype
-        )
 
+        x_mask=x_mask.unsqueeze(1).to(x.dtype)
         x = self.encoder(x * x_mask, x_mask, g=g)
         stats = self.proj(x) * x_mask
 
